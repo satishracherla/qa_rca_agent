@@ -20,6 +20,24 @@ PIPELINE_STEPS = [
     "recommendation_generation",
 ]
 
+MIN_TOKEN_LENGTH = 2
+COMPLETENESS_TOKEN_THRESHOLD = 40
+COMPLETENESS_TOKEN_MULTIPLIER = 1.0 / COMPLETENESS_TOKEN_THRESHOLD
+MAX_HISTORICAL_SIMILARITY = 0.95
+BASE_HISTORICAL_SIMILARITY = 0.25
+HISTORICAL_OVERLAP_WEIGHT = 0.18
+COMPLETENESS_BASE = 0.2
+DEFAULT_HISTORY_SCORE = 0.2
+SIGNAL_AGREEMENT_BASE = 0.25
+SIGNAL_AGREEMENT_DIVISOR = 6
+RULE_CERTAINTY_WEIGHT = 0.35
+SIGNAL_AGREEMENT_WEIGHT = 0.25
+HISTORICAL_SIMILARITY_WEIGHT = 0.20
+INPUT_COMPLETENESS_WEIGHT = 0.20
+MAX_CONFIDENCE_SCORE = 0.98
+HIGH_SEVERITY_THRESHOLD = 0.8
+HUMAN_REVIEW_THRESHOLD = 0.55
+
 
 AGENT_CATALOG = [
     {
@@ -465,7 +483,11 @@ def _flatten_context(value: Any) -> str:
 
 
 def _tokenize(text: str) -> set[str]:
-    return {token for token in re.findall(r"[a-z0-9_/-]+", text.lower()) if len(token) > 2}
+    return {
+        token
+        for token in re.findall(r"[a-z0-9_/-]+", text.lower())
+        if len(token) > MIN_TOKEN_LENGTH
+    }
 
 
 def _historical_matches(tokens: set[str]) -> list[dict[str, Any]]:
@@ -473,7 +495,13 @@ def _historical_matches(tokens: set[str]) -> list[dict[str, Any]]:
     for incident in SAMPLE_INCIDENTS:
         overlap = len(tokens.intersection(set(incident["tags"])))
         if overlap:
-            similarity = round(min(0.95, 0.25 + overlap * 0.18), 2)
+            similarity = round(
+                min(
+                    MAX_HISTORICAL_SIMILARITY,
+                    BASE_HISTORICAL_SIMILARITY + overlap * HISTORICAL_OVERLAP_WEIGHT,
+                ),
+                2,
+            )
             matches.append(
                 {
                     "incident_id": incident["incident_id"],
@@ -502,6 +530,16 @@ def _pick_agents(payload: dict[str, Any]) -> list[str]:
     return agents
 
 
+def _deduplicate_preserving_order(values: list[str]) -> list[str]:
+    seen = set()
+    ordered_values = []
+    for value in values:
+        if value not in seen:
+            seen.add(value)
+            ordered_values.append(value)
+    return ordered_values
+
+
 def _analyze_payload(payload: dict[str, Any]) -> dict[str, Any]:
     combined_text = _flatten_context(payload)
     tokens = _tokenize(combined_text)
@@ -521,16 +559,22 @@ def _analyze_payload(payload: dict[str, Any]) -> dict[str, Any]:
     category, score = scores.most_common(1)[0]
     category_config = RCA_CATEGORIES[category]
     historical_matches = _historical_matches(tokens)
-    completeness = min(1.0, 0.2 + (len(tokens) / 40))
-    agreement = min(1.0, 0.25 + score / 6)
-    history_score = historical_matches[0]["similarity"] if historical_matches else 0.2
+    completeness = min(1.0, COMPLETENESS_BASE + (len(tokens) * COMPLETENESS_TOKEN_MULTIPLIER))
+    agreement = min(1.0, SIGNAL_AGREEMENT_BASE + score / SIGNAL_AGREEMENT_DIVISOR)
+    history_score = historical_matches[0]["similarity"] if historical_matches else DEFAULT_HISTORY_SCORE
     confidence = round(
-        min(0.98, 0.35 * min(1.0, score / 4) + 0.25 * agreement + 0.20 * history_score + 0.20 * completeness),
+        min(
+            MAX_CONFIDENCE_SCORE,
+            RULE_CERTAINTY_WEIGHT * min(1.0, score / 4)
+            + SIGNAL_AGREEMENT_WEIGHT * agreement
+            + HISTORICAL_SIMILARITY_WEIGHT * history_score
+            + INPUT_COMPLETENESS_WEIGHT * completeness,
+        ),
         2,
     )
 
     components = payload.get("components") or []
-    impacted_systems = list(dict.fromkeys(components + category_config["impacted_systems"]))
+    impacted_systems = _deduplicate_preserving_order(components + category_config["impacted_systems"])
     rules_triggered = [f"{category}: {keyword}" for keyword in evidence_by_category[category]]
 
     evidence = []
@@ -554,13 +598,13 @@ def _analyze_payload(payload: dict[str, Any]) -> dict[str, Any]:
         probable_root_causes.append(
             {
                 "cause": f"Similar to {historical_matches[0]['incident_id']} - {historical_matches[0]['title']}.",
-                "confidence": max(0.4, historical_matches[0]["similarity"]),
+                "confidence": historical_matches[0]["similarity"],
                 "supporting_evidence": [historical_matches[0]["category"]],
             }
         )
 
     blast_radius = {
-        "severity": "high" if confidence >= 0.8 else "medium",
+        "severity": "high" if confidence >= HIGH_SEVERITY_THRESHOLD else "medium",
         "affected_domains": impacted_systems,
         "reasoning": "Blast radius is inferred from explicit components plus category-specific platform domains.",
     }
@@ -570,7 +614,7 @@ def _analyze_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "title": payload.get("title", "Untitled incident"),
         "category": category,
         "confidence_score": confidence,
-        "requires_human_review": confidence < 0.55,
+        "requires_human_review": confidence < HUMAN_REVIEW_THRESHOLD,
         "agents_invoked": _pick_agents(payload),
         "analysis_pipeline": PIPELINE_STEPS,
         "probable_root_causes": probable_root_causes,
