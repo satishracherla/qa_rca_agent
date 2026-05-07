@@ -18,6 +18,8 @@ STOP_WORDS = {
     "when", "where", "which", "while", "error", "issue", "failed", "failure", "test", "tests"
 }
 
+MIN_ALNUM_KEYWORD_CHARS = 3
+
 
 def _clean_text(value):
     return (value or "").strip()
@@ -25,11 +27,13 @@ def _clean_text(value):
 
 def _extract_issue_keywords(issue, max_items=5):
     text = f"{_clean_text(issue.title)} {_clean_text(issue.description)}".lower()
-    tokens = re.findall(r"\b[a-zA-Z][a-zA-Z0-9_-]{3,}\b", text)
+    tokens = re.findall(r"\b[a-zA-Z][a-zA-Z0-9_-]{2,}\b", text)
 
     keywords = []
     seen = set()
     for token in tokens:
+        if sum(1 for char in token if char.isalnum()) < MIN_ALNUM_KEYWORD_CHARS:
+            continue
         if token in STOP_WORDS:
             continue
         if token in seen:
@@ -375,4 +379,4 @@ def api_rca_report(issue_id):
 
 if __name__ == '__main__':
     init_db()
-    app.run(debug=True, port=5000)
+    app.run(debug=False, port=5000)

@@ -115,7 +115,8 @@
             tabLink.addEventListener('shown.bs.tab', function (event) {
                 const newHash = event.target.getAttribute('href');
                 if (newHash && validTabs.includes(newHash)) {
-                    history.replaceState(null, '', newHash);
+                    // Preserve the current title while reflecting the active tab in the URL.
+                    history.replaceState(null, document.title, newHash);
                 }
             });
         });

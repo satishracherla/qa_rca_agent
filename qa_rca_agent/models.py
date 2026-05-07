@@ -4,12 +4,17 @@ from typing import List, Dict, Optional, Any
 
 DATABASE = 'qa_agent.db'
 
-def init_db():
+def init_db(reset: bool = False):
     conn = sqlite3.connect(DATABASE)
     cursor = conn.cursor()
     
-    # Ensure a fresh schema for tests by dropping the issues table if it exists
-    cursor.execute('DROP TABLE IF EXISTS issues')
+    if reset:
+        # Ensure a fresh schema for tests by dropping child tables before the issues table
+        cursor.execute('DROP TABLE IF EXISTS recommendations')
+        cursor.execute('DROP TABLE IF EXISTS fishbone_categories')
+        cursor.execute('DROP TABLE IF EXISTS five_whys')
+        cursor.execute('DROP TABLE IF EXISTS root_causes')
+        cursor.execute('DROP TABLE IF EXISTS issues')
     
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS issues (

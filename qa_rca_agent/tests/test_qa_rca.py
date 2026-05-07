@@ -1,6 +1,7 @@
 import unittest
 import os
 import sys
+import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -11,14 +12,15 @@ from qa_rca_agent.analyzer import RCAAnalyzer
 
 class TestQA_RCA(unittest.TestCase):
     def setUp(self):
-        self.db_path = "test_qa.db"
+        db_fd, self.db_path = tempfile.mkstemp(prefix="test_qa_", suffix=".db")
+        os.close(db_fd)
 
         # Override the database path for testing
         self.original_db = models.DATABASE
         models.DATABASE = self.db_path
 
         # Initialize the database schema
-        models.init_db()
+        models.init_db(reset=True)
         self.analyzer = RCAAnalyzer(self.db_path)
 
         # Flask test client
