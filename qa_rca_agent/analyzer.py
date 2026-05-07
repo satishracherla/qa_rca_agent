@@ -30,6 +30,7 @@ class RCAAnalyzer:
     }
 
     PRIORITY_ORDER = {"low": 1, "medium": 2, "high": 3, "critical": 4}
+    MIN_ALNUM_KEYWORD_CHARS = 3
 
     STOP_WORDS = {
         "the", "and", "for", "are", "but", "not", "with", "this", "that", "from",
@@ -45,8 +46,11 @@ class RCAAnalyzer:
         return sqlite3.connect(self.db_path)
 
     def _tokenize(self, text: str) -> List[str]:
-        tokens = re.findall(r"\b[a-zA-Z][a-zA-Z0-9_-]{3,}\b", (text or "").lower())
-        return [t for t in tokens if t not in self.STOP_WORDS]
+        tokens = re.findall(r"\b[a-zA-Z][a-zA-Z0-9_-]{2,}\b", (text or "").lower())
+        return [
+            t for t in tokens
+            if t not in self.STOP_WORDS and sum(1 for char in t if char.isalnum()) >= self.MIN_ALNUM_KEYWORD_CHARS
+        ]
 
     def _issue_text(self, issue_row: Tuple[Any, ...]) -> str:
         title = issue_row[1] or ""
